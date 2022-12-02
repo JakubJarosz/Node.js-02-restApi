@@ -12,32 +12,14 @@ app.use(logger(formatsLogger));
 app.use(cors());
 app.use(express.json());
 
-// app.use((req, res, next) => {
-//   res.status(404).json({ message: "Not found" });
-// });
+
 
 require("./config/config-passport")
 app.use("", contactsRouter);
+app.use("/avatars", express.static("../Node.js-02-restApi/public/avatars"));
 
-let db = {
-  users: [{id: 1}, {id: 2}]
-}
 
-// app.use((err, req, res, next) => {
-//   res.status(500).json({ message: err.message });
-// });
 
-// app.get("/", (req, res) => {
-//   res.send("hello worlds");
-// });
 
-// app.get("/gg", (req, res) => {
-//   res.json(db.users)
-// });
-
-// app.get("/gg/:id", (req, res) => {
-
-//   res.json(db.users);
-// });
 
 module.exports = app;

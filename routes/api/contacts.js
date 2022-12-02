@@ -7,6 +7,13 @@ const jwt = require("jsonwebtoken");
 require("dotenv").config();
 const secret = process.env.SECRET;
 const User = require("../../schemas/user");
+const path = require("path");
+const multer = require("multer");
+const gravatar = require("gravatar");
+const Jimp = require("jimp");
+const rootFolder = path.join(process.cwd(), "tmp");
+const avatarRoot = path.join(process.cwd(), "public/avatars");
+
 
 
 const auth = (req, res, next) => {
@@ -61,7 +68,7 @@ const contactSchema = new mongoose.Schema({
 const contacts = mongoose.model("contacts", contactSchema);
 
 
-router.get("/api/contacts", auth, async (req, res, next) => {
+router.get("/api/contacts", async (req, res, next) => {
   contacts
     .find({})
     .then((data) => {
@@ -142,9 +149,15 @@ router.patch("/api/contacts/:contactId", auth, async (req, res, next) => {
 
 // REGISTRATION, LOGIN, LOGOUT, CURRENT_LOGGED_USER
 
-router.post("/users/signup", async (req, res, next) => {
+router.post("/users/signup",  async (req, res, next) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email });
+ 
+const unsecureUrl = gravatar.url(
+  email,
+  { s: "100", r: "x", d: "retro" },
+  false
+);
   if (user) {
     return res.status(409).json({
       Status: '409 Conflict',
@@ -158,6 +171,7 @@ router.post("/users/signup", async (req, res, next) => {
   try {
     const newUser = new User({ email });
     newUser.setPassword(password);
+    newUser.setAvatar(unsecureUrl);
     await newUser.save();
     res.status(201).json({
       Status: "201 Created",
@@ -237,4 +251,42 @@ router.get("/users/current", auth, async (req, res, next) => {
     },
   });
 });
+
+const storage = multer.diskStorage({
+  destination: function (req, file, cb) {
+    cb(null, rootFolder);
+  },
+  filename: function (req, file, cb) {
+    cb(null, file.originalname);
+  },
+});
+
+const upload = multer({ storage: storage });
+/// AVATARS
+
+router.patch("/users/avatars", upload.single('avatar'), auth, async (req, res, next) => {
+  const filePath = path.join(rootFolder, req.file.originalname);
+  const editedName = req.file.originalname.replace(
+    req.file.originalname,
+    req.user.email + ".jpg"
+  );
+const unsecureUrl = gravatar.url(
+  req.file.originalname,
+  { s: "100", r: "x", d: "retro" },
+  false
+);
+  const avatarPic = path.join(avatarRoot, editedName);
+  const image = await Jimp.read(filePath);
+  image.resize(250, 250);
+  image.write(avatarPic);
+  await User.updateOne({ _id: req.user._id }, { $set: { avatarURL: unsecureUrl } });
+  res.status(200).json({
+    Status: "200 OK",
+    ContentType: "application/json",
+    ResponseBody: {
+      avatarURL: unsecureUrl,
+    },
+  });
+});
 module.exports = router;
+
