@@ -16,8 +16,8 @@ app.use(express.json());
 //   res.status(404).json({ message: "Not found" });
 // });
 
-
-app.use("/api/contacts", contactsRouter);
+require("./config/config-passport")
+app.use("", contactsRouter);
 
 let db = {
   users: [{id: 1}, {id: 2}]
