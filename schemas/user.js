@@ -3,7 +3,7 @@ const bCrypt = require("bcryptjs");
 
 const userSchema = new mongoose.Schema({
   avatarURL: {
-    type: String
+    type: String,
   },
   password: {
     type: String,
@@ -23,6 +23,14 @@ const userSchema = new mongoose.Schema({
     type: String,
     default: null,
   },
+  verify: {
+    type: Boolean,
+    default: false,
+  },
+  verificationToken: {
+    type: String,
+    required: [true, "Verify token is required"],
+  },
 });
 
 userSchema.methods.setPassword = function (password) {
@@ -36,6 +44,7 @@ userSchema.methods.validPassword = function (password) {
 userSchema.methods.setAvatar = function (avatarURL) {
   this.avatarURL = avatarURL;
 }
+
 
 const User = mongoose.model("users", userSchema);
 

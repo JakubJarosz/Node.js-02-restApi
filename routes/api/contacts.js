@@ -1,4 +1,3 @@
-
 const express = require("express");
 const router = express.Router();
 const mongoose = require("mongoose");
@@ -13,8 +12,10 @@ const gravatar = require("gravatar");
 const Jimp = require("jimp");
 const rootFolder = path.join(process.cwd(), "tmp");
 const avatarRoot = path.join(process.cwd(), "public/avatars");
-
-
+const { v4: uuidv4 } = require("uuid");
+const sgMail = require("@sendgrid/mail");
+sgMail.setApiKey(process.env.SENDGRID_API_KEY);
+const mainMail = process.env.MAIN_EMAIL;
 
 const auth = (req, res, next) => {
   passport.authenticate("jwt", { session: false }, (err, user) => {
@@ -28,27 +29,25 @@ const auth = (req, res, next) => {
       });
     }
     req.user = user;
-    next()
+    next();
   })(req, res, next);
-}
+};
 
-
-mongoose.connect(
-  "mongodb+srv://admin:srmn1234@cluster0.ajorxrm.mongodb.net/node-03"
-).then(() => {
-  console.log("Database connection successful");
-}).catch((err) => {
-  console.log("something went wrong", err);
-  process.exit(1);
-});
-
-
+mongoose
+  .connect("mongodb+srv://admin:srmn1234@cluster0.ajorxrm.mongodb.net/node-03")
+  .then(() => {
+    console.log("Database connection successful");
+  })
+  .catch((err) => {
+    console.log("something went wrong", err);
+    process.exit(1);
+  });
 
 const contactSchema = new mongoose.Schema({
   owner: {
-      type: mongoose.Schema.Types.ObjectId,
-      ref: 'user',
-    },
+    type: mongoose.Schema.Types.ObjectId,
+    ref: "user",
+  },
   name: {
     type: String,
     required: [true, "Set name for contact"],
@@ -66,7 +65,6 @@ const contactSchema = new mongoose.Schema({
 });
 
 const contacts = mongoose.model("contacts", contactSchema);
-
 
 router.get("/api/contacts", async (req, res, next) => {
   contacts
@@ -149,30 +147,45 @@ router.patch("/api/contacts/:contactId", auth, async (req, res, next) => {
 
 // REGISTRATION, LOGIN, LOGOUT, CURRENT_LOGGED_USER
 
-router.post("/users/signup",  async (req, res, next) => {
+router.post("/users/signup", async (req, res, next) => {
   const { email, password } = req.body;
   const user = await User.findOne({ email });
- 
-const unsecureUrl = gravatar.url(
-  email,
-  { s: "100", r: "x", d: "retro" },
-  false
-);
+  const randomToken = uuidv4();
+  const msg = {
+    to: email,
+    from: mainMail,
+    subject: "Verification mail",
+    text: `Please verify your email here: /users/verify/${randomToken}`,
+  };
+
+  const unsecureUrl = gravatar.url(
+    email,
+    { s: "100", r: "x", d: "retro" },
+    false
+  );
   if (user) {
     return res.status(409).json({
-      Status: '409 Conflict',
+      Status: "409 Conflict",
       ContentType: "application/json",
       ResponseBody: {
-        "messege": "Email in use",
-      } 
-      
-    })
+        messege: "Email in use",
+      },
+    });
   }
   try {
     const newUser = new User({ email });
     newUser.setPassword(password);
     newUser.setAvatar(unsecureUrl);
+    newUser.verificationToken = randomToken;
     await newUser.save();
+    sgMail
+      .send(msg)
+      .then(() => {
+      console.log("Email sent")
+      })
+      .catch(err => {
+      console.log(err)
+    })
     res.status(201).json({
       Status: "201 Created",
       ContentType: "application/json",
@@ -202,9 +215,15 @@ router.post("/users/login", async (req, res, next) => {
         message: "Email or password is wrong",
       },
     });
+  } else if (user.verify === false) {
+    return res.status(401).json({
+      Status: "401 Unauthorized",
+      ResponseBody: {
+        message: "Email not verified",
+      },
+    });
   }
   try {
-   
     const payload = {
       id: user._id,
       emial: user.email,
@@ -215,30 +234,29 @@ router.post("/users/login", async (req, res, next) => {
       Status: "200 OK",
       ContentType: "application/json",
       ResponseBody: {
-        "token": token,
-        "user": {
-          "email": email,
-          "subscription": "starter"
-        }
-      }
-    })
+        token: token,
+        user: {
+          email: email,
+          subscription: "starter",
+        },
+      },
+    });
 
-    await User.updateOne({email: email}, {$set: {token: token}})
+    await User.updateOne({ email: email }, { $set: { token: token } });
   } catch {
-     res.status(400).json({
-       Status: "400 Bad Request",
-       ContentType: "application/json",
-       ResponseBody: "Błąd z Joi lub innej biblioteki walidacji",
-     });
- }
-
+    res.status(400).json({
+      Status: "400 Bad Request",
+      ContentType: "application/json",
+      ResponseBody: "Błąd z Joi lub innej biblioteki walidacji",
+    });
+  }
 });
 
 router.get("/users/logout", auth, async (req, res, next) => {
   await User.updateOne({ _id: req.user._id }, { $set: { token: null } });
   return res.status(204).json({
-    Status: "204 No Content"
-  })
+    Status: "204 No Content",
+  });
 });
 
 router.get("/users/current", auth, async (req, res, next) => {
@@ -262,31 +280,104 @@ const storage = multer.diskStorage({
 });
 
 const upload = multer({ storage: storage });
+
 /// AVATARS
 
-router.patch("/users/avatars", upload.single('avatar'), auth, async (req, res, next) => {
-  const filePath = path.join(rootFolder, req.file.originalname);
-  const editedName = req.file.originalname.replace(
-    req.file.originalname,
-    req.user.email + ".jpg"
-  );
-const unsecureUrl = gravatar.url(
-  req.file.originalname,
-  { s: "100", r: "x", d: "retro" },
-  false
+router.patch(
+  "/users/avatars",
+  upload.single("avatar"),
+  auth,
+  async (req, res, next) => {
+    const filePath = path.join(rootFolder, req.file.originalname);
+    const editedName = req.file.originalname.replace(
+      req.file.originalname,
+      req.user.email + ".jpg"
+    );
+    const unsecureUrl = gravatar.url(
+      req.file.originalname,
+      { s: "100", r: "x", d: "retro" },
+      false
+    );
+    const avatarPic = path.join(avatarRoot, editedName);
+    const image = await Jimp.read(filePath);
+    image.resize(250, 250);
+    image.write(avatarPic);
+    await User.updateOne(
+      { _id: req.user._id },
+      { $set: { avatarURL: unsecureUrl } }
+    );
+    res.status(200).json({
+      Status: "200 OK",
+      ContentType: "application/json",
+      ResponseBody: {
+        avatarURL: unsecureUrl,
+      },
+    });
+  }
 );
-  const avatarPic = path.join(avatarRoot, editedName);
-  const image = await Jimp.read(filePath);
-  image.resize(250, 250);
-  image.write(avatarPic);
-  await User.updateOne({ _id: req.user._id }, { $set: { avatarURL: unsecureUrl } });
-  res.status(200).json({
-    Status: "200 OK",
-    ContentType: "application/json",
-    ResponseBody: {
-      avatarURL: unsecureUrl,
-    },
+
+//EMAIL
+
+router.get("/users/verify/:verificationToken", async (req, res, next) => {
+  const user = await User.findOne({
+    verificationToken: req.params.verificationToken,
   });
+  if (user) {
+     await User.updateOne(
+       { verificationToken: req.params.verificationToken },
+       { $set: { verify: true, verificationToken: null } }
+     );
+    res.status(200).json({
+      Status: "200 OK",
+      ResponseBody: {
+        message: "Verification successful",
+      },
+    });
+  } else {
+    res.status(404).json({
+      Status: "404 Not Found",
+      ResponseBody: {
+        message: "User not found",
+      },
+    });
+  }
+});
+
+router.post("/users/verify", async (req, res, next) => {
+  const { email } = req.body;
+  const user = await User.findOne({ email });
+  if (!email) {
+    res.status(400).json({
+      Status: "400 Bad Request",
+      ContentType: "application/json",
+      ResponseBody: {
+        message: "missing required field email",
+      },
+    });
+  } else if (email && user.verify === false) {
+        const msg = {
+          to: email,
+          from: mainMail,
+          subject: "Verification mail",
+          text: `Please verify your email here: /users/verify/${user.verificationToken}`,
+        };
+    sgMail
+      .send(msg)
+      .then(() => {
+        console.log("Email sent");
+      })
+      .catch((err) => {
+        console.log(err);
+      });  
+  } else if (user.verify === true) {
+    res.status(400).json({
+      Status: "400 Bad Request",
+      ContentType: "application/json",
+      ResponseBody: {
+         message: "Verification has already been passed"
+}
+    })
+  }
 });
 module.exports = router;
 
